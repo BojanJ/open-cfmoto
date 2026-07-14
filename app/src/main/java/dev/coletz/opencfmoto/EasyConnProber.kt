@@ -350,7 +350,25 @@ class EasyConnProber(
                 if (gw is Inet4Address && !gw.isAnyLocalAddress) return gw
             }
         }
-        return lp.dnsServers.filterIsInstance<Inet4Address>().firstOrNull()
+        lp.dnsServers.filterIsInstance<Inet4Address>().firstOrNull()?.let { return it }
+
+        // Wi-Fi Direct / P2P dashes (SSID "DIRECT-go-CFMOTO-…", e.g. some 800MT/1000 MT-X units)
+        // advertise neither a default route nor a DNS server, so both lookups above fail and we used
+        // to abort. On Wi-Fi Direct the bike is the P2P group owner, which always sits at .1 of the
+        // /24 (typically 192.168.49.1). Derive it from our own address as a last resort.
+        val myV4 = lp.linkAddresses.map { it.address }
+            .filterIsInstance<Inet4Address>()
+            .firstOrNull { !it.isLoopbackAddress && !it.isLinkLocalAddress && !it.isAnyLocalAddress }
+        if (myV4 != null) {
+            val o = myV4.address
+            val gw = byteArrayOf(o[0], o[1], o[2], 1)
+            return try {
+                (java.net.InetAddress.getByAddress(gw) as Inet4Address).also {
+                    log("no default-route gateway (Wi-Fi Direct?); assuming P2P group owner ${it.hostAddress}")
+                }
+            } catch (_: Exception) { null }
+        }
+        return null
     }
 
     private fun pickBikeInterfaceIp(network: Network?): Inet4Address? {
